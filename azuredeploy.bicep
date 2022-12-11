@@ -30,7 +30,7 @@ param adminSqlUsername string
 @secure()
 param adminSqlPassword string
 
-param githubRepo string = 'https://github.com/mhdbouk/azure-sonarqube'
+param githubRepo string = 'https://github.com/mhdbouk/azure-sonarqube.git'
 
 @allowed([
   'Community'
@@ -45,8 +45,8 @@ param sonarQubeVersion string = 'Latest'
 
 var appPlanName = 'plan-${uniqueString(resourceGroup().id)}'
 var appName = 'app-sonarqube-${uniqueString(resourceGroup().id)}'
-var sqlServerName = 'sql-${location}-${uniqueString(resourceGroup().id)}'
-var sqlDatabase = 'sqldb-sonarqube'
+var sqlServerName = 'sql-${uniqueString(resourceGroup().id)}'
+var sqlDatabaseName = 'sqldb-sonarqube'
 
 resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
   location: location
@@ -71,9 +71,9 @@ resource allowAllWindowsAzureIps 'Microsoft.Sql/servers/firewallRules@2021-02-01
   }
 }
 
-resource sonarQubeDatabase 'Microsoft.Sql/servers/databases@2022-05-01-preview' = {
+resource sqlDatabase 'Microsoft.Sql/servers/databases@2022-05-01-preview' = {
   parent: sqlServer
-  name: sqlDatabase
+  name: sqlDatabaseName
   location: location
   tags: {
     displayName: 'SonarQube Database'
@@ -81,8 +81,9 @@ resource sonarQubeDatabase 'Microsoft.Sql/servers/databases@2022-05-01-preview' 
   sku: {
     name: 'Basic'
   }
+
   properties: {
-    collation: 'SQL_Latin1_General_CP1_CI_AS'
+    collation: 'SQL_Latin1_General_CP1_CS_AS'
     maxSizeBytes: 1073741824
   }
 }
@@ -90,12 +91,8 @@ resource sonarQubeDatabase 'Microsoft.Sql/servers/databases@2022-05-01-preview' 
 resource appServicePlan 'Microsoft.Web/serverfarms@2019-08-01' = {
   name: appPlanName
   location: location
-  kind: 'linux'
   tags: {
     displayName: 'App Service Plan'
-  }
-  properties: {
-    reserved: true
   }
   sku: {
     name: skuName
@@ -103,7 +100,7 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2019-08-01' = {
   }
 }
 
-resource webApplication 'Microsoft.Web/sites@2019-08-01' = {
+resource webApplication 'Microsoft.Web/sites@2022-03-01' = {
   name: appName
   location: location
   tags: {
@@ -113,46 +110,60 @@ resource webApplication 'Microsoft.Web/sites@2019-08-01' = {
   properties: {
     clientAffinityEnabled: false
     serverFarmId: appServicePlan.id
+    siteConfig: {
+      javaVersion: '11'
+      javaContainer: 'TOMCAT'
+      javaContainerVersion: '9.0'
+      appSettings: [
+        {
+          name: 'SONARQUBE_JDBC_URL'
+          value: 'jdbc:sqlserver://${sqlServer.properties.fullyQualifiedDomainName}:1433;database=${sqlDatabase.name};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;'
+        }
+        {
+          name: 'SONARQUBE_JDBC_USERNAME'
+          value: adminSqlUsername
+        }
+        {
+          name: 'SONARQUBE_JDBC_PASSWORD'
+          value: adminSqlPassword
+        }
+        {
+          name: 'SonarQubeEdition'
+          value: sonarQubeEdition
+        }
+        {
+          name: 'SonarQubeVersion'
+          value: sonarQubeVersion
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: appInsights.properties.ConnectionString
+        }
+        {
+          name: 'ApplicationInsightsAgent_EXTENSION_VERSION'
+          value: appInsights.properties.InstrumentationKey
+        }
+        {
+          name: 'Deployment_Telemetry_Instrumentation_Key'
+          value: appInsights.properties.InstrumentationKey
+        }
+      ]
+    }
   }
-}
-
-resource appconfig 'Microsoft.Web/sites/config@2016-08-01' = {
-  parent: webApplication
-  name: 'web'
-  properties: {
-    javaVersion: '11'
-    javaContainer: 'TOMCAT'
-    javaContainerVersion: '9.0'
-  }
-}
-
-resource appsettings 'Microsoft.Web/sites/config@2022-03-01' = {
-  name: 'appsettings'
-  parent: webApplication
-  properties: {
-    SONARQUBE_JDBC_URL: 'jdbc:sqlserver://${sqlServer.properties.fullyQualifiedDomainName},1433;database=${sqlDatabase};encrypt=true;'
-    SONARQUBE_JDBC_USERNAME: adminSqlUsername
-    SONARQUBE_JDBC_PASSWORD: adminSqlPassword
-    SonarQubeEdition: sonarQubeEdition
-    SonarQubeVersion: sonarQubeVersion
-  }
-}
-
-resource sourceControl 'Microsoft.Web/sites/sourcecontrols@2016-08-01' = {
-  parent: webApplication
-  name: 'web'
-  properties: {
-    repoUrl: githubRepo
-    branch: 'main'
-    isManualIntegration: true
+  resource sourceControl 'sourcecontrols@2022-03-01' = {
+    name: 'web'
+    properties: {
+      repoUrl: githubRepo
+      branch: 'main'
+      isManualIntegration: true
+    }
   }
 }
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
-  name: 'insights-${webApplication.name}'
+  name: 'insights-${appName}'
   location: location
   tags: {
-    'hidden-link:${webApplication.id}': 'Resource'
     displayName: 'AppInsightsComponent'
   }
   kind: 'web'
