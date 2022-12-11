@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.13.1.58284",
-      "templateHash": "12747212825391571041"
+      "templateHash": "5838439858165060843"
     }
   },
   "parameters": {
@@ -57,6 +57,27 @@
       "metadata": {
         "description": "Admin SQL Server password"
       }
+    },
+    "githubRepo": {
+      "type": "string",
+      "defaultValue": "https://github.com/mhdbouk/azure-sonarqube"
+    },
+    "sonarQubeEdition": {
+      "type": "string",
+      "defaultValue": "Community",
+      "allowedValues": [
+        "Community",
+        "Developer",
+        "Enterprise",
+        "Data Center"
+      ]
+    },
+    "sonarQubeVersion": {
+      "type": "string",
+      "defaultValue": "Latest",
+      "metadata": {
+        "description": "Default is latest, change it to use a specific version"
+      }
     }
   },
   "variables": {
@@ -66,6 +87,33 @@
     "sqlDatabase": "sqldb-sonarqube"
   },
   "resources": [
+    {
+      "type": "Microsoft.Sql/servers",
+      "apiVersion": "2022-05-01-preview",
+      "name": "[variables('sqlServerName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "displayName": "Sql Server"
+      },
+      "properties": {
+        "administratorLogin": "[parameters('adminSqlUsername')]",
+        "administratorLoginPassword": "[parameters('adminSqlPassword')]",
+        "version": "12.0",
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.Sql/servers/firewallRules",
+      "apiVersion": "2021-02-01-preview",
+      "name": "[format('{0}/{1}', variables('sqlServerName'), 'AllowAllWindowsAzureIps')]",
+      "properties": {
+        "endIpAddress": "0.0.0.0",
+        "startIpAddress": "0.0.0.0"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]"
+      ]
+    },
     {
       "type": "Microsoft.Sql/servers/databases",
       "apiVersion": "2022-05-01-preview",
@@ -84,21 +132,6 @@
       "dependsOn": [
         "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]"
       ]
-    },
-    {
-      "type": "Microsoft.Sql/servers",
-      "apiVersion": "2022-05-01-preview",
-      "name": "[variables('sqlServerName')]",
-      "location": "[parameters('location')]",
-      "tags": {
-        "displayName": "Sql Server"
-      },
-      "properties": {
-        "administratorLogin": "[parameters('adminSqlUsername')]",
-        "administratorLoginPassword": "[parameters('adminSqlPassword')]",
-        "version": "12.0",
-        "publicNetworkAccess": "Enabled"
-      }
     },
     {
       "type": "Microsoft.Web/serverfarms",
@@ -127,9 +160,7 @@
         "displayName": "SonarQube web app"
       },
       "properties": {
-        "siteConfig": {
-          "linuxFxVersion": "DOCKER|SONARQUBE"
-        },
+        "clientAffinityEnabled": false,
         "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appPlanName'))]"
       },
       "dependsOn": [
@@ -138,16 +169,60 @@
     },
     {
       "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2016-08-01",
+      "name": "[format('{0}/{1}', variables('appName'), 'web')]",
+      "properties": {
+        "javaVersion": "11",
+        "javaContainer": "TOMCAT",
+        "javaContainerVersion": "9.0"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/sites/config",
       "apiVersion": "2022-03-01",
       "name": "[format('{0}/{1}', variables('appName'), 'appsettings')]",
-      "kind": "string",
       "properties": {
         "SONARQUBE_JDBC_URL": "[format('jdbc:sqlserver://{0},1433;database={1};encrypt=true;', reference(resourceId('Microsoft.Sql/servers', variables('sqlServerName')), '2022-05-01-preview').fullyQualifiedDomainName, variables('sqlDatabase'))]",
         "SONARQUBE_JDBC_USERNAME": "[parameters('adminSqlUsername')]",
-        "SONARQUBE_JDBC_PASSWORD": "[parameters('adminSqlPassword')]"
+        "SONARQUBE_JDBC_PASSWORD": "[parameters('adminSqlPassword')]",
+        "SonarQubeEdition": "[parameters('sonarQubeEdition')]",
+        "SonarQubeVersion": "[parameters('sonarQubeVersion')]"
       },
       "dependsOn": [
         "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]",
+        "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/sites/sourcecontrols",
+      "apiVersion": "2016-08-01",
+      "name": "[format('{0}/{1}', variables('appName'), 'web')]",
+      "properties": {
+        "repoUrl": "[parameters('githubRepo')]",
+        "branch": "main",
+        "isManualIntegration": true
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[format('insights-{0}', variables('appName'))]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "[format('hidden-link:{0}', resourceId('Microsoft.Web/sites', variables('appName')))]": "Resource",
+        "displayName": "AppInsightsComponent"
+      },
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web"
+      },
+      "dependsOn": [
         "[resourceId('Microsoft.Web/sites', variables('appName'))]"
       ]
     }
