@@ -30,6 +30,19 @@ param adminSqlUsername string
 @secure()
 param adminSqlPassword string
 
+param githubRepo string = 'https://github.com/mhdbouk/azure-sonarqube'
+
+@allowed([
+  'Community'
+  'Developer'
+  'Enterprise'
+  'Data Center'
+])
+param sonarQubeEdition string = 'Community'
+
+@description('Default is latest, change it to use a specific version')
+param sonarQubeVersion string = 'Latest'
+
 var appPlanName = 'plan-${uniqueString(resourceGroup().id)}'
 var appName = 'app-sonarqube-${uniqueString(resourceGroup().id)}'
 var sqlServerName = 'sql-${location}-${uniqueString(resourceGroup().id)}'
@@ -98,21 +111,52 @@ resource webApplication 'Microsoft.Web/sites@2019-08-01' = {
     displayName: 'SonarQube web app'
   }
   properties: {
-    siteConfig: {
-      linuxFxVersion: 'DOCKER|SONARQUBE'
-    }
+    clientAffinityEnabled: false
     serverFarmId: appServicePlan.id
+  }
+}
+
+resource appconfig 'Microsoft.Web/sites/config@2016-08-01' = {
+  parent: webApplication
+  name: 'web'
+  properties: {
+    javaVersion: '11'
+    javaContainer: 'TOMCAT'
+    javaContainerVersion: '9.0'
   }
 }
 
 resource appsettings 'Microsoft.Web/sites/config@2022-03-01' = {
   name: 'appsettings'
-  kind: 'string'
   parent: webApplication
   properties: {
     SONARQUBE_JDBC_URL: 'jdbc:sqlserver://${sqlServer.properties.fullyQualifiedDomainName},1433;database=${sqlDatabase};encrypt=true;'
     SONARQUBE_JDBC_USERNAME: adminSqlUsername
     SONARQUBE_JDBC_PASSWORD: adminSqlPassword
-    sonar_path_data: '/home/sonarqube/data'
+    SonarQubeEdition: sonarQubeEdition
+    SonarQubeVersion: sonarQubeVersion
+  }
+}
+
+resource sourceControl 'Microsoft.Web/sites/sourcecontrols@2016-08-01' = {
+  parent: webApplication
+  name: 'web'
+  properties: {
+    repoUrl: githubRepo
+    branch: 'main'
+    isManualIntegration: true
+  }
+}
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: 'insights-${webApplication.name}'
+  location: location
+  tags: {
+    'hidden-link:${webApplication.id}': 'Resource'
+    displayName: 'AppInsightsComponent'
+  }
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
   }
 }
